@@ -72,6 +72,29 @@ extensions = [
     "sphinx.ext.ifconfig",
     "sphinx.ext.mathjax",
     "sphinx.ext.napoleon",
+    "sphinxcontrib.gtagjs",
+]
+
+
+from sphinx.ext.autodoc.mock import _MockObject
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
+
+autodoc_mock_imports = ["hyperopt", "ogb"]
+
+for _ in range(50):
+    try:
+        import olorenchemengine
+    except ModuleNotFoundError as e:
+        mod_name = str(e).split("'")[1]
+        print("Mocking {}".format(mod_name))
+        autodoc_mock_imports.append(mod_name)
+        sys.modules[mod_name] = _MockObject()
+
+print(autodoc_mock_imports)
+
+gtagjs_ids = [
+    'G-R5E6ME01BB',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -184,6 +207,9 @@ html_theme = "furo"
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
+
+# adding JS code to each page (for google analytics)
+# html_js_files = ['js/analytics.js',]
 
 # If not '', a 'Last updated on:' timestamp is inserted at every page bottom,
 # using the given strftime format.
