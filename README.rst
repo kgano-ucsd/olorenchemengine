@@ -22,8 +22,10 @@ molecular vector representations.
     df = oce.ExampleDataFrame()
 
     model = oce.BaseBoosting([
-                oce.RandomForestModel(oce.DescriptastorusDescriptor("rdkit2dnormalized"), n_estimators=1000),
-                oce.RandomForestModel(oce.OlorenCheckpoint("default"), n_estimators=1000)])
+                oce.RandomForestModel(oce.OlorenCheckpoint("default"), n_estimators=1000),  # RF w/ our proprietary fingerprint
+                oce.SPGNN(model_type="contextpred"),  # fine tune a trained GNN on your data
+            ])
+            
     model.fit(df["Smiles"], df["pChEMBL Value"])
 
     oce.save(model, "model.oce")
@@ -93,13 +95,13 @@ _______________________________
 Installation
 _______________________________
 
-In a Python 3.8 environment, you can install the package with the following command:
+In a fresh Python 3.8 environment, you can install the package with the following command:
 
 .. code-block:: bash
 
     bash <(curl -s https://raw.githubusercontent.com/Oloren-AI/olorenchemengine/master/install.sh)
 
-Feel free to check out install.sh to see what is happening under the hood. This will work fine in both a conda environment and a pip environment.
+Feel free to check out install.sh to see what is happening under the hood. This will work fine in both a conda environment and a pip environment. The reason why a fresh environment is preferred is because PyTorch Geometric/ PyTorch/ CUDA are very particular about versioning, which often are more muddled in existing environment.
 
 _______________________________
 Docker

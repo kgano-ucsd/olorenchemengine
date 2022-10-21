@@ -1,20 +1,20 @@
+from typing import Any, List, Union
+
 import numpy as np
 import pandas as pd
-
-from typing import List, Union, Any
-
-import olorenchemengine as oce
-from olorenchemengine.base_class import log_arguments, BaseModel
-from olorenchemengine.representations import BaseVecRepresentation, SMILESRepresentation
-from olorenchemengine.internal import download_public_file
-from .operations import WordVocab, TrfmSeq2seq, Seq2seqDataset
-
+import torch
 from torch.utils.data import DataLoader
 
-import torch
-    
+import olorenchemengine as oce
+from olorenchemengine.base_class import BaseModel, log_arguments
+from olorenchemengine.internal import download_public_file
+from olorenchemengine.representations import BaseVecRepresentation, SMILESRepresentation
+
+from .operations import Seq2seqDataset, TrfmSeq2seq, WordVocab
+
+
 class HondaSTRep(BaseVecRepresentation):
-    """ HondaSTRep is an implementation of the molecular representation provided
+    """HondaSTRep is an implementation of the molecular representation provided
     by Honda et al. in `SMILES Transformer: Pre-trained Molecular Fingerprint for Low Data Drug Discovery
     <https://arxiv.org/abs/1911.04738>`."""
 
@@ -30,15 +30,27 @@ class HondaSTRep(BaseVecRepresentation):
 
     def _convert(self, s: str) -> np.ndarray:
         seq2seqdataset = Seq2seqDataset([s], self.vocab)
-        loader = DataLoader(seq2seqdataset, batch_size=32, shuffle=False, num_workers=oce.CONFIG["NUM_WORKERS"])
+        loader = DataLoader(
+            seq2seqdataset,
+            batch_size=32,
+            shuffle=False,
+            num_workers=oce.CONFIG["NUM_WORKERS"],
+        )
         output = self.trfm.encode(next(iter(loader)))
         return output
 
-    def _convert_list(self, smiles_list: List[str], ys: List[Union[int, float, np.number]] = None) -> List[np.ndarray]:
+    def _convert_list(
+        self, smiles_list: List[str], ys: List[Union[int, float, np.number]] = None
+    ) -> List[np.ndarray]:
         if isinstance(smiles_list, pd.Series):
             smiles_list = smiles_list.tolist()
         seq2seqdataset = Seq2seqDataset(smiles_list, self.vocab)
-        loader = DataLoader(seq2seqdataset, batch_size=32, shuffle=False, num_workers=oce.CONFIG["NUM_WORKERS"])
+        loader = DataLoader(
+            seq2seqdataset,
+            batch_size=32,
+            shuffle=False,
+            num_workers=oce.CONFIG["NUM_WORKERS"],
+        )
         output = None
         for b, sm in enumerate(loader):
             sm = torch.t(sm)

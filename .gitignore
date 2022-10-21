@@ -1,5 +1,7 @@
 # Temporary and binary files
 
+demo.py
+
 gcloud-auth.json
 
 experiments
@@ -22,6 +24,7 @@ experiments
 __pycache__/*
 .cache/*
 .*.swp
+tmp.ipynb
 */.ipynb_checkpoints/*
 .ipynb_checkpoints
 .DS_Store

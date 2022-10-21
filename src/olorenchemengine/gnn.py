@@ -1,33 +1,34 @@
 """ Building blocks for graph neural networks.
 """
 
+import torch
+import torch.nn as nn
+from pytorch_lightning import LightningModule
+
 from .base_class import *
 from .representations import BaseRepresentation, TorchGeometricGraph
 
-import torch
-import torch.nn as nn
+if isinstance(LightningModule, MagicMock):
+    lm_imports = (BaseClass,)
+else:
+    lm_imports = (LightningModule, BaseClass)
 
-from pytorch_lightning import LightningModule
 
+class BaseLightningModule(*lm_imports):
 
-class BaseLightningModule(LightningModule, BaseClass):
-
-    """ BaseLightningModule allows for the use of a Pytorch Lightning module as a BaseClass to be incorporated into the framework.
+    """BaseLightningModule allows for the use of a Pytorch Lightning module as a BaseClass to be incorporated into the framework.
 
     Parameters:
         optim (str, optional): parameter describing what kind of optimizer to use. Defaults to "adam".
         input_dimensions (Tuple, optional): Tulpe describing the dimensions of the input data. Defaults to None.
     """
 
-    haspreprocess = False
-    hascollate_fn = False
-
     def __init__(self, optim: str = "adam", input_dimensions: Tuple = None):
         super().__init__()
         self.optim = optim
 
     def set_task_type(self, task_type, pos_weight=torch.tensor([1])):
-        """ Sets the task type for the model.
+        """Sets the task type for the model.
 
         Parameters:
             task_type (str): the task type to set the model to.
@@ -35,12 +36,14 @@ class BaseLightningModule(LightningModule, BaseClass):
 
         """
         if task_type == "classification":
-            self.loss_fun = nn.BCEWithLogitsLoss(reduction="none", pos_weight=pos_weight)
+            self.loss_fun = nn.BCEWithLogitsLoss(
+                reduction="none", pos_weight=pos_weight
+            )
         else:
             self.loss_fun = nn.MSELoss()
 
     def loss(self, y_pred, y_true):
-        """ Calculate the loss for the model.
+        """Calculate the loss for the model.
 
         Parameters:
             y_pred (torch.tensor): the predictions for the model.
@@ -100,10 +103,10 @@ class BaseLightningModule(LightningModule, BaseClass):
 
 class MultiSequential(nn.Sequential):
 
-    """ Helper class to allow for the use of nn.Sequential with multi-input torch.nn modules"""
+    """Helper class to allow for the use of nn.Sequential with multi-input torch.nn modules"""
 
     def forward(self, *input):
-        """ Forward pass of the module.
+        """Forward pass of the module.
 
         Parameters:
             *input (torch.tensor): the input data.
@@ -122,7 +125,7 @@ class MultiSequential(nn.Sequential):
 
 class AttentiveFP(BaseLightningModule):
 
-    """ AttentiveFP is a wrapper for the PyTorch Geometric interpretation of https://pubs.acs.org/doi/10.1021/acs.jmedchem.9b00959.
+    """AttentiveFP is a wrapper for the PyTorch Geometric interpretation of https://pubs.acs.org/doi/10.1021/acs.jmedchem.9b00959.
 
     Parameters:
         hidden_channels (int, optional): the number of hidden channels to use in the model. Defaults to 4.
@@ -170,7 +173,7 @@ class AttentiveFP(BaseLightningModule):
             self.activation = nn.ELU
 
     def create(self, dimensions):
-        """ Create the model.
+        """Create the model.
 
         Parameters:
             dimensions (list): the dimensions of the input data.
@@ -201,7 +204,10 @@ class AttentiveFP(BaseLightningModule):
                     dropout=self.dropout,
                 ),
                 *[
-                    nn.Sequential(nn.Linear(self.layer_dims[i], self.layer_dims[i + 1]), self.activation())
+                    nn.Sequential(
+                        nn.Linear(self.layer_dims[i], self.layer_dims[i + 1]),
+                        self.activation(),
+                    )
                     for i in range(len(self.layer_dims) - 1)
                 ],
                 nn.Linear(self.layer_dims[-1], 1)
@@ -224,7 +230,7 @@ class AttentiveFP(BaseLightningModule):
 
 class BaseTorchGeometricModel(BaseModel):
 
-    """ BaseTorchGeometricModel is a base class for models in the PyTorch Geometric framework.
+    """BaseTorchGeometricModel is a base class for models in the PyTorch Geometric framework.
 
     Parameters:
         network (nn.Module): The network to be used for the model.
@@ -243,7 +249,7 @@ class BaseTorchGeometricModel(BaseModel):
     @log_arguments
     def __init__(
         self,
-        network: nn.Module,
+        network: BaseLightningModule,
         representation: BaseRepresentation = TorchGeometricGraph(),
         epochs: int = 1,
         batch_size: int = 16,
@@ -264,15 +270,15 @@ class BaseTorchGeometricModel(BaseModel):
         from pytorch_lightning import Trainer
 
         self.trainer = Trainer(
-            accelerator="auto", max_epochs=self.epochs, auto_lr_find=auto_lr_find, num_sanity_val_steps=0
+            accelerator="auto", 
+            max_epochs=self.epochs, 
+            auto_lr_find=auto_lr_find,
+            num_sanity_val_steps=0
         )
 
         super().__init__(log=False, **kwargs)
 
     def preprocess(self, X, y, fit=False):
-        if self.network.haspreprocess:
-            X_ = self.network.preprocess(X, y)
-            return X_
         if y is None:
             y = [None] * len(X)
 
@@ -287,40 +293,30 @@ class BaseTorchGeometricModel(BaseModel):
         if len(values) == 2:
             if self.pos_weight == "balanced":
                 self.network.set_task_type(
-                    "classification", pos_weight=torch.tensor([(len(y_train) - sum(y_train)) / sum(y_train)])
+                    "classification",
+                    pos_weight=torch.tensor(
+                        [(len(y_train) - sum(y_train)) / sum(y_train)]
+                    ),
                 )
             else:
                 self.network.set_task_type("classification")
         else:
             self.network.set_task_type("regression")
 
-        if self.network.hascollate_fn:
-            from torch.utils.data import DataLoader as TorchDataLoader
+        from torch_geometric.data import DataLoader as PyGDataLoader
 
-            dataloader = TorchDataLoader(
-                X_train, batch_size=self.batch_size, shuffle=True, num_workers=8, collate_fn=self.network.collate_fn
-            )
-        else:
-            from torch_geometric.data import DataLoader as PyGDataLoader
-
-            dataloader = PyGDataLoader(X_train, batch_size=self.batch_size, shuffle=True, num_workers=8)
+        dataloader = PyGDataLoader(X_train, batch_size=self.batch_size, shuffle=True, num_workers=oce.CONFIG["NUM_WORKERS"])
 
         self.trainer.fit(self.network, dataloader)
 
     def _predict(self, X):
         self.network.eval()
-        if self.network.hascollate_fn:
-            from torch.utils.data import DataLoader as TorchDataLoader
+        
+        from torch_geometric.data import DataLoader as PyGDataLoader
 
-            dataloader = TorchDataLoader(
-                X, batch_size=self.batch_size, num_workers=8, collate_fn=self.network.collate_fn
-            )
-        else:
-            from torch_geometric.data import DataLoader as PyGDataLoader
+        dataloader = PyGDataLoader(X, batch_size=self.batch_size, num_workers=oce.CONFIG["NUM_WORKERS"])
 
-            dataloader = PyGDataLoader(X, batch_size=self.batch_size, num_workers=8)
-
-        predictions = [x for x in self.trainer.predict(self.network, dataloader)]
+        predictions = self.trainer.predict(self.network, dataloader)
 
         predictions = np.concatenate([x.cpu().numpy() for x in predictions])
 
@@ -336,6 +332,7 @@ class BaseTorchGeometricModel(BaseModel):
     def _load(self, d):
         super()._load(d)
         import sys
+
         self.network = torch.load(io.BytesIO(d["save"]))
 
 
@@ -344,7 +341,7 @@ from collections import OrderedDict
 
 class TLFromCheckpoint(BaseLightningModule):
 
-    """ TLFromCheckpoint is a base class for transfer-learning from an OlorenVec PyTorch-lightning checkpoint.
+    """TLFromCheckpoint is a base class for transfer-learning from an OlorenVec PyTorch-lightning checkpoint.
 
     Parameters:
         model_path (str, option): The path to the PyTorch-lightning checkpoint. Ise
@@ -380,12 +377,24 @@ class TLFromCheckpoint(BaseLightningModule):
             logging.warn("Overriding map_location to cpu as no GPUs are available.")
 
         state_dict = OrderedDict(
-            [(k.replace("model.", ""), v) for k, v in torch.load(path, map_location=map_location)["state_dict"].items()]
+            [
+                (k.replace("model.", ""), v)
+                for k, v in torch.load(path, map_location=map_location)[
+                    "state_dict"
+                ].items()
+            ]
         )
 
         from olorenchemengine.pyg.gcn import GNN
 
-        self.A = GNN(gnn_type="gcn", num_tasks=num_tasks, num_layer=5, emb_dim=300, drop_ratio=0.5, virtual_node=False)
+        self.A = GNN(
+            gnn_type="gcn",
+            num_tasks=num_tasks,
+            num_layer=5,
+            emb_dim=300,
+            drop_ratio=0.5,
+            virtual_node=False,
+        )
         if not reset:
             self.A.load_state_dict(state_dict)
         self.B = nn.Sequential(
@@ -399,4 +408,3 @@ class TLFromCheckpoint(BaseLightningModule):
             )
         )
         self.network = nn.Sequential(OrderedDict([("A", self.A), ("B", self.B)]))
-
