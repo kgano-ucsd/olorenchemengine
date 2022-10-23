@@ -128,6 +128,7 @@ plot
         document.getElementById("basevis-molecule").appendChild(closeUp);
         var sub_smiles = substructures[bit];
 
+        
         SmilesDrawer.parse(sub_smiles, function(tree) {
             // Draw to the canvas
             smilesDrawer.draw(tree, "closeUp", "light", false);

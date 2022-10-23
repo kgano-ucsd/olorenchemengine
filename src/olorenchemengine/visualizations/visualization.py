@@ -8,6 +8,7 @@ from re import escape
 
 from IPython.display import IFrame
 from pandas.core.indexes.accessors import NoNewAttributesMixin
+from pygments import highlight
 from rdkit import Chem
 from rdkit.Chem import Draw
 from sklearn.model_selection import PredefinedSplit
@@ -1079,7 +1080,7 @@ class MorganContributions(BaseVisualization):
         """Train random forest model based on the morgan vec representation"""
         model = oce.RandomForestModel(
             MorganVecRepresentation(scale=None, collinear_thresh=1.01),
-            n_estimators=1000,
+            n_estimators=1000
         )
         model.fit(*self.dataset.entire_dataset)
         return model
@@ -1162,24 +1163,43 @@ class MorganContributions(BaseVisualization):
         Returns:
             Tuple of two lists of images. (minimum effect, maximum effect)
         """
-
-        mol = Chem.MolFromSmiles(self.smiles)
-        info = MorganVecRepresentation.info(self, self.smiles)
-
-        mfp_svgs_min = []
-        mfp_svgs_max = []
-
-        self.predictions = self._calculate_effect()
         bottom_3_bits, top_3_bits = self._top_3_predictions()
 
-        mfp_svgs_min = {
-            str(i): Draw.DrawMorganBit(mol, i, info, useSVG=True) for i in bottom_3_bits
-        }
-        mfp_svgs_max = {
-            str(i): Draw.DrawMorganBit(mol, i, info, useSVG=True) for i in top_3_bits
-        }
+        bottom_3_min, bottom_3_max = self._top_3_min_max()
 
-        return mfp_svgs_min, mfp_svgs_max
+        bottom_3_min, bottom_3_max = self._filter(bottom_3_min, bottom_3_max)
+        print(bottom_3_min, bottom_3_max)
+        bottom_bits, top_bits = (
+            bottom_3_bits[0 : len(bottom_3_min)],
+            top_3_bits[0 : len(bottom_3_max)],
+        )
+        
+        substructures = self.get_substructures(bottom_bits, top_bits)
+
+        substruct_hl = {}
+        for bit in bottom_bits:
+            mol = Chem.MolFromSmiles(self.smiles).GetSubstructMatches(Chem.MolFromSmarts(substructures[str(bit)]))
+            substruct_hl[bit] = mol
+            
+        for bit in top_bits:
+            mol = Chem.MolFromSmiles(self.smiles).GetSubstructMatches(Chem.MolFromSmarts(substructures[str(bit)]))
+            substruct_hl[bit] = mol
+        # info = MorganVecRepresentation.info(self, self.smiles)
+
+        # mfp_svgs_min = []
+        # mfp_svgs_max = []
+
+        # self.predictions = self._calculate_effect()
+        # bottom_3_bits, top_3_bits = self._top_3_predictions()
+
+        # mfp_svgs_min = {
+        #     str(i): Draw.DrawMorganBit(mol, i, info, useSVG=True) for i in bottom_3_bits
+        # }
+        # mfp_svgs_max = {
+        #     str(i): Draw.DrawMorganBit(mol, i, info, useSVG=True) for i in top_3_bits
+        # }
+
+        return substruct_hl
 
     def _filter(self, min_val, max_val):
 
