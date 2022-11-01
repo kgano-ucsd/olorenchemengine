@@ -1,11 +1,10 @@
+""" Techniques for quantifying uncertainty and estimating confidence intervals for all oce models.
+"""
 
 import numpy as np
 import pandas as pd
 from rdkit.Chem import AllChem
 from rdkit.DataStructs.cDataStructs import BulkTanimotoSimilarity
-from sklearn.cross_decomposition import PLSRegression
-from sklearn.decomposition import PCA
-from sklearn.neighbors import NearestNeighbors
 
 import olorenchemengine as oce
 
@@ -20,9 +19,10 @@ class BaseEnsembleModel(BaseErrorModel):
     """
 
     @log_arguments
-    def __init__(self, ensemble_model = None, n_ensembles = 16):            
+    def __init__(self, ensemble_model = None, n_ensembles = 16, log=True, **kwargs):      
         self.ensemble_model = ensemble_model
         self.n_ensembles = n_ensembles
+        super().__init__(log=False, **kwargs)
 
     def build(
         self,
@@ -53,12 +53,26 @@ class BaseEnsembleModel(BaseErrorModel):
 class BootstrapEnsemble(BaseEnsembleModel):
     """ BootstrapEnsemble estimates uncertainty based on the variance of several
         models trained on bootstrapped samples of the training data.
+
+        Parameters:
+            ensemble_model (BaseModel): Model used for ensembling. Defaults to the same as the original model.
+            n_ensembles (int): Number of ensembles
+            bootstrap_size (float): Proportion of training data to train each ensemble model
+    
+    Example
+    ------------------------------
+    import olorenchemengine as oce
+
+    model = oce.RandomForestModel(representation = oce.MorganVecRepresentation(radius=2, nbits=2048), n_estimators = 1000)
+    model.fit_cv(train["Drug"], train["Y"], error_model = oce.BootstrapEnsemble(n_ensembles = 10))
+    model.predict(test["Drug"], return_ci = True)
+    ------------------------------
     """
     
     @log_arguments
-    def __init__(self, ensemble_model = None, n_ensembles = 16, bootstrap_size = 0.25):
-        super().__init__(ensemble_model = ensemble_model, n_ensembles = n_ensembles)
+    def __init__(self, ensemble_model = None, n_ensembles = 16, bootstrap_size = 0.25, log=True, **kwargs):
         self.bootstrap_size = bootstrap_size
+        super().__init__(ensemble_model = ensemble_model, n_ensembles = n_ensembles,log=False, **kwargs)
 
     def build(
         self,
@@ -81,6 +95,19 @@ class BootstrapEnsemble(BaseEnsembleModel):
 class RandomForestEnsemble(BaseEnsembleModel):
     """ RandomForestEnsemble estimates uncertainty based on the variance of several
         random forest models initialized to different random states.
+
+        Parameters:
+            ensemble_model (BaseModel): Model used for ensembling. Defaults to the same as the original model.
+            n_ensembles (int): Number of ensembles
+    
+    Example
+    ------------------------------
+    import olorenchemengine as oce
+
+    model = oce.RandomForestModel(representation = oce.MorganVecRepresentation(radius=2, nbits=2048), n_estimators = 1000)
+    model.fit_cv(train["Drug"], train["Y"], error_model = oce.RandomForestEnsemble(n_ensembles = 10))
+    model.predict(test["Drug"], return_ci = True)
+    ------------------------------
     """
     
     def build(
@@ -151,10 +178,12 @@ class SDC(BaseFingerprintModel):
     """
 
     @log_arguments
-    def __init__(self, a=3):
+    def __init__(self, a=3, log=True, **kwargs):
         self.a = a
+        super().__init__(log=False, **kwargs)
 
     def calculate(self, X, y_pred):
+        X = SMILESRepresentation().convert(X)
         def sdc(smi):
             mol = Chem.MolFromSmiles(smi)
             ref_fp = AllChem.GetMorganFingerprint(mol, 2)
@@ -183,6 +212,7 @@ class TargetDistDC(SDC):
     """
 
     def calculate(self, X, y_pred):
+        X = SMILESRepresentation().convert(X)
         def dist(smi, pred):
             mol = Chem.MolFromSmiles(smi)
             ref_fp = AllChem.GetMorganFingerprint(mol, 2)
@@ -216,6 +246,7 @@ class TrainDistDC(SDC):
     """
 
     def calculate(self, X, y_pred):
+        X = SMILESRepresentation().convert(X)
         residuals = np.abs(self.y_train - self.y_pred_train)
 
         def dist(smi):
@@ -249,10 +280,12 @@ class KNNSimilarity(BaseFingerprintModel):
     """
 
     @log_arguments
-    def __init__(self, k=5):
+    def __init__(self, k=5, log=True, **kwargs):
         self.k = k
+        super().__init__(log=False, **kwargs)
 
     def calculate(self, X, y_pred):
+        X = SMILESRepresentation().convert(X)
         def mean_sim(smi):
             mol = Chem.MolFromSmiles(smi)
             ref_fp = AllChem.GetMorganFingerprint(mol, 2)
@@ -282,6 +315,7 @@ class TargetDistKNN(KNNSimilarity):
     """
 
     def calculate(self, X, y_pred):
+        X = SMILESRepresentation().convert(X)
         def dist(smi, pred):
             mol = Chem.MolFromSmiles(smi)
             ref_fp = AllChem.GetMorganFingerprint(mol, 2)
@@ -316,6 +350,7 @@ class TrainDistKNN(KNNSimilarity):
     """
 
     def calculate(self, X, y_pred):
+        X = SMILESRepresentation().convert(X)
         residuals = np.abs(self.y_train - self.y_pred_train)
 
         def dist(smi):
@@ -344,11 +379,6 @@ class Predicted(BaseErrorModel):
     model.predict(test["Drug"], return_ci = True)
     ------------------------------
     """
-
-    @log_arguments
-    def __init__(self):
-        pass
-
     def calculate(self, X, y_pred):
         return y_pred
 
@@ -373,8 +403,9 @@ class ADAN(BaseErrorModel):
     """
 
     @log_arguments
-    def __init__(self, criterion: str):
+    def __init__(self, criterion: str, log=True, **kwargs):
         self.criterion = criterion
+        super().__init__(log=False, **kwargs)
 
     def build(
         self,
@@ -394,11 +425,15 @@ class ADAN(BaseErrorModel):
         max_components = min(100, min(self.X_train.shape))
 
         if dim_reduction == "pls":
+            from sklearn.cross_decomposition import PLSRegression
+
             self.reduction = PLSRegression(n_components=max_components)
             self.reduction.fit(self.X_train, self.y_train)
             x_var = np.var(self.reduction.x_scores_, axis=0)
             x_var /= np.sum(x_var)
         elif dim_reduction == "pca":
+            from sklearn.decomposition import PCA
+
             self.reduction = PCA(n_components=max_components)
             self.reduction.fit(self.X_train, self.y_train)
             x_var = self.reduction.explained_variance_ratio_
@@ -415,6 +450,8 @@ class ADAN(BaseErrorModel):
         self.Xp_train = self.reduction.transform(self.X_train)[:, : self.n_components]
         self.Xp_mean = np.mean(self.Xp_train, axis=0)
         self.y_mean = np.mean(self.y_train)
+
+        from sklearn.neighbors import NearestNeighbors
 
         nbrs = NearestNeighbors(n_neighbors=2).fit(self.Xp_train)
         distances, indices = nbrs.kneighbors(self.Xp_train)
@@ -445,6 +482,7 @@ class ADAN(BaseErrorModel):
         }
 
     def calculate_full(self, X):
+        X = SMILESRepresentation().convert(X)
         criteria = ["A", "B", "C", "D", "E", "F"]
         y_pred = np.array(self.model.predict(X)).flatten()
         X = self.preprocess(X)
@@ -461,6 +499,7 @@ class ADAN(BaseErrorModel):
         self.results = pd.DataFrame(self.results)
 
     def calculate(self, X, y_pred):
+        X = SMILESRepresentation().convert(X)
         """Calcualtes confidence scores."""
         X = self.preprocess(X)
         Xp = self.reduction.transform(X)[:, : self.n_components]
@@ -468,6 +507,7 @@ class ADAN(BaseErrorModel):
         return self._calculate(X, Xp, y_pred, self.criterion)
 
     def _calculate(self, X, Xp, y_pred, criterion: str, standardize: bool = True):
+        from sklearn.neighbors import NearestNeighbors
         if criterion in ("A", "A_raw"):
             dist = np.linalg.norm(Xp - self.Xp_mean, axis=1)
         elif criterion in ("B", "B_raw"):
@@ -551,6 +591,7 @@ class ADAN(BaseErrorModel):
             neighbor_thresh (float): fraction of closest training queries to consider
         """
         n_neighbors = int(self.X_train.shape[0] * neighbor_thresh) + n_drop
+        from sklearn.neighbors import NearestNeighbors
         nbrs = NearestNeighbors(n_neighbors=n_neighbors).fit(self.Xp_train)
         distances, indices = nbrs.kneighbors(Xp)
 
@@ -558,3 +599,74 @@ class ADAN(BaseErrorModel):
         y_mse = np.mean(y_sqerr[indices[:, n_drop:]], axis=1).astype(float)
 
         return np.sqrt(y_mse).flatten()
+
+class AggregateErrorModel(BaseErrorModel):
+    """ AggregateErrorModel estimates uncertainty by aggregating ucertainty scores from
+        several different BaseErrorModels.
+
+        Parameters:
+            error_models (list of BaseErrorModel): list of error models to be aggregated
+            reduction (BaseReduction): reduction method used to aggregate uncertainty scores
+    
+    Example
+    ------------------------------
+    import olorenchemengine as oce
+
+    model = oce.RandomForestModel(representation = oce.MorganVecRepresentation(radius=2, nbits=2048), n_estimators = 1000)
+    model.fit(train["Drug"], train["Y"])
+    error_model = oce.AggregateErrorModel(error_models = [oce.TargetDistDC(), oce.TrainDistDC()], reduction = oce.FactorAnalysis())
+    error_model.build(model, train["Drug"], train["Y"])
+    error_model.fit(valid["Drug"], valid["Y"])
+    error_model.score(test["Drug"])
+    ------------------------------
+    """
+
+    @log_arguments
+    def __init__(self, error_models: List[BaseErrorModel], reduction: BaseReduction, log=True,
+                 **kwargs):
+        if not isinstance(error_models, list):
+            raise TypeError("error_models must be a list")
+        self.error_models = error_models
+        self.reduction = reduction
+        super().__init__(log=False, **kwargs)
+
+    def build(
+        self,
+        model: BaseModel,
+        X: Union[pd.DataFrame, np.ndarray, list, pd.Series],
+        y: Union[np.ndarray, list, pd.Series],
+    ):
+        for error_model in self.error_models:
+            error_model.build(model, X, y)
+        super().build(model, X, y)
+
+    def fit(self, X: Union[pd.DataFrame, np.ndarray, list, pd.Series], y: Union[np.ndarray, list, pd.Series], **kwargs):
+        """Fits confidence scores to an external dataset
+
+        Args:
+            X (array-like): features, smiles
+            y (array-like): true values
+        """
+        y_pred = np.array(self.model.predict(X)).flatten()
+        scores = [error_model.calculate(X, y_pred) for error_model in self.error_models]
+        scores = np.transpose(np.stack(scores))
+        self.reduction.fit(scores)
+
+        residuals = np.abs(np.array(y) - y_pred)
+        scores = self.reduction.transform(scores)
+
+        self._fit(residuals, scores, **kwargs)
+
+    def calculate(
+        self, X: Union[pd.DataFrame, np.ndarray, list, pd.Series], y_pred: np.ndarray
+    ) -> np.ndarray:
+        """Computes aggregate error model score from inputs.
+
+        Args:
+            X: features, smiles
+            y_pred: predicted values
+        """
+        scores = [error_model.calculate(X, y_pred) for error_model in self.error_models]
+        scores = np.transpose(np.stack(scores))
+
+        return self.reduction.transform(scores)

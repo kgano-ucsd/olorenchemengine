@@ -760,6 +760,8 @@ class BaseModel(BaseClass):
 
         import joblib
 
+        import joblib
+
         dataset_hash = joblib.hash(X) + joblib.hash(y)
 
         y_pred = self.predict(X)
@@ -1015,7 +1017,49 @@ class BaseSKLearnModel(BaseModel):
             self.regression_model._load(d["model"])
             self.model = self.regression_model
 
+class BaseReduction(BaseClass):
+    """
+    BaseReduction for applying dimensionality reduction on high-dimensional data
 
+    Parameters:
+        n_components (int): the number of components to keep
+
+    Methods:
+        fit: fit the model with input data
+        fit_transform: fit the model with and apply dimensionality reduction to input data
+        transform: apply dimensionality reduction to input data
+    """
+    def __init__(self):
+        pass
+
+    @abstractmethod
+    def fit(self, X):
+        pass
+    
+    @abstractmethod
+    def fit_transform(self, X):
+        pass
+
+    @abstractmethod
+    def transform(self, X):
+        pass
+    
+
+class BaseSKLearnReduction(BaseReduction):
+    """
+    Base class for creating sklearn dimensionality reduction
+
+    """
+    def fit(self, X):
+        return self.obj.fit(X)
+    
+    def fit_transform(self, X):
+        return self.obj.fit_transform(X)
+
+    def transform(self, X):
+        return self.obj.transform(X)
+
+    
 class BaseErrorModel(BaseClass):
     """Base class for error models.
 
@@ -1032,8 +1076,21 @@ class BaseErrorModel(BaseClass):
         score: returns confidence intervals on a dataset
     """
 
-    def __init__(self):
-        pass
+    @log_arguments
+    def __init__(self, ci: float = 0.8, 
+        method: str = "qbin",
+        window: int = 100,
+        bins: int = 10,
+        min_per_bin: int = 5,
+        log=True, 
+        **kwargs):
+        
+        self.ci = ci
+        self.method = method
+        self.window = window
+        self.bins = bins
+        self.min_per_bin = min_per_bin
+        
 
     def build(
         self,
@@ -1074,6 +1131,7 @@ class BaseErrorModel(BaseClass):
         self,
         X: Union[pd.DataFrame, np.ndarray, list, pd.Series],
         y: Union[np.ndarray, list, pd.Series],
+        ci: float = None,
         **kwargs,
     ):
         """Fits confidence scores to an external dataset
@@ -1082,31 +1140,44 @@ class BaseErrorModel(BaseClass):
             X (array-like): features, smiles
             y (array-like): true values
         """
+        if ci is None:
+            ci = self.ci
+            
+        X = oce.SMILESRepresentation().convert(X)
         y_pred = np.array(self.model.predict(X)).flatten()
         residuals = np.abs(np.array(y) - y_pred)
-
         scores = np.array(self.calculate(X, y_pred))
-        self._fit(residuals, scores, **kwargs)
 
-    def fit_cv(self, n_splits: int = 5, **kwargs):
+        self._fit(residuals, scores, quantile = ci, **kwargs)
+
+    def fit_cv(self,  X: Union[pd.DataFrame, np.ndarray, list, pd.Series],
+        y: Union[np.ndarray, list, pd.Series], n_splits: int = 5, ci: float = None, **kwargs):
         """Fits confidence scores to the training dataset via cross validation.
 
         Args:
             n_splits (int): Number of cross validation splits, default 5
         """
+        
+        if ci is None:
+            ci = self.ci
+            
         from sklearn.model_selection import KFold
         from sklearn.calibration import calibration_curve
-
+        
+        X = np.array(oce.SMILESRepresentation().convert(X))
+        if issubclass(type(y), pd.Series):
+            y = y.values
+        
         residuals = None
         scores = None
         kf = KFold(n_splits=n_splits)
 
         for train_index, test_index in kf.split(X):
-            X_train, X_test = self.X_train[train_index], self.X_train[test_index]
-            y_train, y_test = self.y_train[train_index], self.y_train[test_index]
+            X_train, X_test = X[train_index], X[test_index]
+            y_train, y_test = y[train_index], y[test_index]
             model = self.model.copy()
             model.fit(X_train, y_train)
-
+            
             y_pred_test = np.array(model.predict(X_test)).flatten()
             pred_error = np.abs(y_test - y_pred_test)
             if residuals is None:
@@ -1122,17 +1193,13 @@ class BaseErrorModel(BaseClass):
             else:
                 scores = np.concatenate((scores, new_scores))
 
-        self._fit(residuals, scores, **kwargs)
+        self._fit(residuals, scores, quantile = ci, **kwargs)
 
     def _fit(
         self,
         residuals: np.ndarray,
         scores: np.ndarray,
-        quantile: float = 0.95,
-        method: str = "roll",
-        window: int = 100,
-        bins: int = 10,
-        min_per_bin: int = 5,
+        quantile: float = None,
         filename: str = "figure.png",
     ):
         """Fits confidence scores to residuals.
@@ -1147,31 +1214,34 @@ class BaseErrorModel(BaseClass):
             min_per_bin (int): minimum number of instances per bin
             filename (str): save destination of the fitted plot
         """
-        if method == "bin":
-            bin_labels = pd.cut(scores, bins, labels=False)
+        if quantile is None:
+            quantile = self.ci
+        
+        if self.method == "bin":
+            bin_labels = pd.cut(scores, self.bins, labels=False)
             X = []
             y = []
-            for i in range(bins):
+            for i in range(self.bins):
                 ith_bin = bin_labels == i
-                if np.sum(ith_bin) >= min_per_bin:
+                if np.sum(ith_bin) >= self.min_per_bin:
                     X.append(np.mean(scores[ith_bin]))
                     y.append(pd.Series(residuals[ith_bin]).quantile(quantile))
             X = np.array(X)
             y = np.array(y)
-        elif method == "qbin":
-            bin_labels = pd.qcut(scores, bins, labels=False, duplicates="drop")
+        elif self.method == "qbin":
+            bin_labels = pd.qcut(scores, self.bins, labels=False, duplicates="drop")
             n_labels = int(max(bin_labels) + 1)
             X = np.array([np.mean(scores[bin_labels == i]) for i in range(n_labels)])
             y = np.array([pd.Series(residuals[bin_labels == i]).quantile(quantile) for i in range(n_labels)])
-        elif method == "roll":
+        elif self.method == "roll":
             results = list(zip(scores, residuals))
             scores, residuals = zip(*sorted(results))
-            X = pd.Series(scores).rolling(window).mean()
-            y = pd.Series(residuals).rolling(window).quantile(quantile)
+            X = pd.Series(scores).rolling(self.window).mean()
+            y = pd.Series(residuals).rolling(self.window).quantile(quantile)
             X = np.array(X[~np.isnan(X)])
             y = np.array(y[~np.isnan(y)])
         else:
-            raise NameError("method {} is not recognized".format(method))
+            raise NameError("method {} is not recognized".format(self.method))
 
         import matplotlib.pyplot as plt
         from scipy.optimize import curve_fit
@@ -1197,16 +1267,12 @@ class BaseErrorModel(BaseClass):
                 opt_func = func
                 opt_popt = popt
                 min_mse = mse
-        X_min, X_max = np.min(X), np.max(X)
-        if opt_func(X_min, *opt_popt) < opt_func(X_max, *opt_popt):
-            self.reg = np.vectorize(lambda x: opt_func(max(x, X_min), *opt_popt))
-        else:
-            self.reg = np.vectorize(lambda x: opt_func(min(x, X_max), *opt_popt))
+        floor, ceil = np.min(residuals), np.max(residuals)
+        self.reg = np.vectorize(lambda x: max(min(opt_func(x, *opt_popt), ceil), floor))
 
+        sorted_scores = np.sort(scores)
         plt.xlabel(self.__class__.__name__)
         plt.ylabel("Absolute Error")
-        sorted_scores = np.sort(scores)
-
         plt.scatter(scores, residuals, c="black", alpha=0.2)
         plt.scatter(X, y, c="blue")
         plt.plot(sorted_scores, self.reg(sorted_scores), c="red")
@@ -1214,11 +1280,7 @@ class BaseErrorModel(BaseClass):
 
         self.residuals = residuals
         self.scores = scores
-        self.method = method
-        self.bins = bins
-        self.window = window
         self.quantile = quantile
-        self.min_per_bin = min_per_bin
         self.filename = filename
 
     def score(
@@ -1292,10 +1354,6 @@ class BaseErrorModel(BaseClass):
             self._fit(
                 residuals,
                 scores,
-                method=method,
-                bins=bins,
-                window=window,
                 quantile=quantile,
-                min_per_bin=min_per_bin,
                 filename=filename,
             )
